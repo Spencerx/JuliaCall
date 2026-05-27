@@ -91,7 +91,28 @@ julia_locate <- function(JULIA_HOME = NULL){
 ## It is currently used in julia_setup in zzz.R and julia_library in package.R
 julia_line <- function(command, ...){
     command <- c("--startup-file=no", command)
-    system2(file.path(.julia$bin_dir, "julia"), shQuote(command), ...)
+
+    # Workaround for Ubuntu libunwind issue (see JuliaInterop/JuliaCall#238).
+    # julia_setup in zzz.R preloads Julia's bundled libunwind in the parent R
+    # process via dyn.load, but child Julia processes spawned here inherit R's
+    # LD_LIBRARY_PATH (set by the R startup wrapper to /usr/lib/x86_64-linux-gnu)
+    # and otherwise load the buggy system libunwind 1.6.2, which segfaults
+    # during e.g. Pkg.add in install_dependency.jl.
+    extra_env <- character(0)
+    if (identical(get_os(), "linux") && !is.null(.julia$bin_dir)) {
+        libunwind_paths <- Sys.glob(file.path(.julia$bin_dir, "..", "lib",
+                                              "julia", "libunwind.so*"))
+        if (length(libunwind_paths) > 0) {
+            existing <- Sys.getenv("LD_PRELOAD")
+            extra_env <- paste0("LD_PRELOAD=",
+                                paste(c(libunwind_paths[1],
+                                        if (nzchar(existing)) existing),
+                                      collapse = " "))
+        }
+    }
+
+    system2(file.path(.julia$bin_dir, "julia"), shQuote(command),
+            env = extra_env, ...)
     # r[length(r)]
 }
 
